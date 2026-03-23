@@ -123,8 +123,10 @@ class SignalAggregator:
         confidence = np.clip(confidence, 0.0, 0.95)
         direction = np.clip(direction, -1.0, 1.0)
 
-        # Require minimum threshold
-        if abs(direction) < 0.05:
+        # Require minimum direction strength and multi-strategy agreement
+        if abs(direction) < 0.20:
+            return None
+        if n_strategies < 2:
             return None
 
         return Signal(

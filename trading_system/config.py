@@ -50,7 +50,7 @@ class RiskConfig(BaseModel):
 
 class ExecutionConfig(BaseModel):
     order_type: str = "limit"
-    limit_offset_pct: float = 0.05
+    limit_offset_pct: float = 0.01
     max_slippage_pct: float = 0.1
     retry_attempts: int = 3
     retry_delay_seconds: int = 5

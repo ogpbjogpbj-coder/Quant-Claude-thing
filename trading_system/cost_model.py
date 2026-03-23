@@ -164,7 +164,9 @@ class ExecutionCostModel:
         -------
         bool
         """
-        edge = abs(signal_strength)
+        # Signal strength is 0-1 but represents conviction, not expected return.
+        # Scale to a realistic expected return range (0-2%) for cost comparison.
+        edge = abs(signal_strength) * 0.02  # 1.0 strength -> 2% expected return
         threshold = cost_estimate.total_cost_pct * self._ALPHA_COST_MULTIPLE
 
         if edge > threshold:
