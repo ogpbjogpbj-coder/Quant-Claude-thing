@@ -6,6 +6,8 @@ from trading_system.strategies.mean_reversion import MeanReversionStrategy
 from trading_system.strategies.ml_ensemble import MLEnsembleStrategy
 from trading_system.strategies.volatility_breakout import VolatilityBreakoutStrategy
 from trading_system.strategies.trend_following import TrendFollowingStrategy
+from trading_system.strategies.pairs_trading import PairsTradingStrategy
+from trading_system.strategies.sentiment import SentimentStrategy
 
 __all__ = [
     "BaseStrategy",
@@ -15,4 +17,6 @@ __all__ = [
     "MLEnsembleStrategy",
     "VolatilityBreakoutStrategy",
     "TrendFollowingStrategy",
+    "PairsTradingStrategy",
+    "SentimentStrategy",
 ]

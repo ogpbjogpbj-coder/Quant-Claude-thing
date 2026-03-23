@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Optional
 
 import numpy as np
+import pandas as pd
 from loguru import logger
 
 from trading_system.config import TradingConfig
@@ -13,6 +14,23 @@ from trading_system.risk_manager import RiskManager
 from trading_system.strategies.base import Signal
 from trading_system.utils.db import record_snapshot
 from trading_system.utils.logger import log_trade
+
+
+# Sector mappings for the default universe
+SECTOR_MAP = {
+    "SPY": "ETF", "QQQ": "ETF",
+    "AAPL": "Technology", "MSFT": "Technology", "GOOGL": "Technology",
+    "AMZN": "Consumer Discretionary", "NVDA": "Technology", "META": "Technology",
+    "TSLA": "Consumer Discretionary", "AMD": "Technology",
+    "JPM": "Financials", "V": "Financials", "MA": "Financials", "BAC": "Financials",
+    "UNH": "Healthcare", "JNJ": "Healthcare", "LLY": "Healthcare",
+    "ABBV": "Healthcare", "MRK": "Healthcare", "TMO": "Healthcare",
+    "PG": "Consumer Staples", "COST": "Consumer Staples", "PEP": "Consumer Staples",
+    "HD": "Consumer Discretionary",
+    "XOM": "Energy", "CVX": "Energy",
+    "AVGO": "Technology", "CRM": "Technology", "ADBE": "Technology",
+    "NFLX": "Communication Services",
+}
 
 
 @dataclass
@@ -99,10 +117,73 @@ class PortfolioManager:
         positions = self.execution.get_positions()
         return {sym: abs(p["market_value"]) for sym, p in positions.items()}
 
+    def _get_sector_exposure(self) -> dict[str, float]:
+        """Calculate current dollar exposure by sector."""
+        position_values = self.get_position_values()
+        sector_exposure: dict[str, float] = {}
+        for sym, value in position_values.items():
+            sector = SECTOR_MAP.get(sym, "Other")
+            sector_exposure[sector] = sector_exposure.get(sector, 0) + value
+        return sector_exposure
+
+    def _check_sector_limit(self, symbol: str, add_value: float) -> bool:
+        """Check if adding this position would breach sector limit."""
+        sector = SECTOR_MAP.get(symbol, "Other")
+        if sector == "ETF":
+            return True  # No sector limit on ETFs
+        sector_exposure = self._get_sector_exposure()
+        current = sector_exposure.get(sector, 0)
+        max_sector = self._equity * self.config.risk.max_sector_exposure_pct / 100
+        if current + add_value > max_sector:
+            logger.info(
+                f"Sector limit: {symbol} ({sector}) would breach "
+                f"${current + add_value:,.0f} > ${max_sector:,.0f}"
+            )
+            return False
+        return True
+
+    def _check_correlation(
+        self, symbol: str, enriched_data: dict[str, pd.DataFrame] | None
+    ) -> float:
+        """Return a correlation-based scaling factor (0-1) for a new position.
+
+        If the new symbol is highly correlated with existing positions,
+        scale down the position size.
+        """
+        if not enriched_data or symbol not in enriched_data:
+            return 1.0
+        if not self.tracked:
+            return 1.0
+
+        try:
+            new_returns = enriched_data[symbol]["close"].pct_change().dropna().tail(60)
+            max_corr = 0.0
+            for existing_sym in self.tracked:
+                if existing_sym in enriched_data:
+                    ex_returns = enriched_data[existing_sym]["close"].pct_change().dropna().tail(60)
+                    aligned = pd.concat([new_returns, ex_returns], axis=1).dropna()
+                    if len(aligned) > 10:
+                        corr = abs(aligned.iloc[:, 0].corr(aligned.iloc[:, 1]))
+                        max_corr = max(max_corr, corr)
+
+            threshold = self.config.risk.max_correlation_threshold
+            if max_corr > threshold:
+                scale = max(0.2, 1.0 - (max_corr - threshold) / (1.0 - threshold))
+                logger.info(
+                    f"Correlation scale for {symbol}: {scale:.2f} "
+                    f"(max_corr={max_corr:.2f})"
+                )
+                return scale
+        except Exception as e:
+            logger.warning(f"Correlation check failed for {symbol}: {e}")
+
+        return 1.0
+
     def process_signals(
         self,
         signals: list[Signal],
         prices: dict[str, float],
+        enriched_data: dict[str, pd.DataFrame] | None = None,
     ) -> list[str]:
         """Process approved signals into orders.
 
@@ -133,6 +214,11 @@ class PortfolioManager:
             current_qty = self.get_current_positions_qty().get(signal.symbol, 0)
 
             if signal.is_buy:
+                # Sector limit check
+                est_size = self._equity * self.config.risk.max_position_size_pct / 100 * 0.5
+                if not self._check_sector_limit(signal.symbol, est_size):
+                    continue
+
                 # Calculate position size in dollars
                 volatility = signal.metadata.get("volatility_21d", 0.2)
                 size_dollars = self.risk_manager.calculate_position_size(
@@ -142,6 +228,17 @@ class PortfolioManager:
                     current_position_value=current_value,
                     volatility=volatility,
                 )
+
+                if size_dollars <= 0:
+                    continue
+
+                # Apply correlation scaling
+                corr_scale = self._check_correlation(signal.symbol, enriched_data)
+                size_dollars *= corr_scale
+
+                # Apply regime position scale if present
+                regime_scale = signal.metadata.get("regime_scale", 1.0)
+                size_dollars *= regime_scale
 
                 if size_dollars <= 0:
                     continue

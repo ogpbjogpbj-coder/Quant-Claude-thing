@@ -83,12 +83,12 @@ class MLEnsembleStrategy(BaseStrategy):
         return feat_df
 
     def _prepare_target(self, df: pd.DataFrame, forward_days: int = 5) -> pd.Series:
-        """Target: forward N-day return, classified as -1, 0, +1."""
+        """Target: forward N-day return, classified as 0 (sell), 1 (hold), 2 (buy)."""
         fwd_ret = df["close"].pct_change(forward_days).shift(-forward_days)
-        # Classify: >1% = buy, <-1% = sell, else hold
-        target = pd.Series(0, index=fwd_ret.index)
-        target[fwd_ret > 0.01] = 1
-        target[fwd_ret < -0.01] = -1
+        # Classify: >1% = buy(2), <-1% = sell(0), else hold(1)
+        target = pd.Series(1, index=fwd_ret.index)
+        target[fwd_ret > 0.01] = 2
+        target[fwd_ret < -0.01] = 0
         return target
 
     def train(self, data: dict[str, pd.DataFrame]) -> None:
@@ -231,7 +231,7 @@ class MLEnsembleStrategy(BaseStrategy):
                 # Average probabilities across models
                 avg_probs = np.mean(probs_list, axis=0)
 
-                # Classes: [-1, 0, 1] -> indices [0, 1, 2]
+                # Classes: [0=sell, 1=hold, 2=buy]
                 sell_prob = avg_probs[0]
                 hold_prob = avg_probs[1]
                 buy_prob = avg_probs[2]

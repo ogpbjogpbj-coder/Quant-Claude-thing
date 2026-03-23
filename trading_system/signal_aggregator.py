@@ -24,7 +24,15 @@ class SignalAggregator:
             "ml_ensemble": config.ml_ensemble.weight,
             "volatility_breakout": config.volatility_breakout.weight,
             "trend_following": config.trend_following.weight,
+            "pairs_trading": config.pairs_trading.weight,
+            "sentiment": config.sentiment.weight,
         }
+        self._regime_adjustments: dict[str, float] = {}
+
+    def set_regime_adjustments(self, adjustments: dict[str, float]) -> None:
+        """Apply regime-based weight adjustments."""
+        self._regime_adjustments = adjustments
+        logger.info(f"Regime weight adjustments applied: {adjustments}")
 
     def aggregate(self, all_signals: list[Signal]) -> list[Signal]:
         """Aggregate signals per symbol into weighted consensus signals.
@@ -71,7 +79,9 @@ class SignalAggregator:
         all_metadata = {}
 
         for sig in signals:
-            w = self.weights.get(sig.strategy, 0.1)
+            base_w = self.weights.get(sig.strategy, 0.1)
+            regime_mult = self._regime_adjustments.get(sig.strategy, 1.0)
+            w = base_w * regime_mult
             total_weight += w
             weighted_direction += sig.direction * w * sig.confidence
             weighted_confidence += sig.confidence * w

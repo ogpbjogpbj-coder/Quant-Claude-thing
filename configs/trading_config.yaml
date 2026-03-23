@@ -42,17 +42,17 @@ universe:
 strategies:
   momentum:
     enabled: true
-    weight: 0.25
+    weight: 0.20
     lookback_periods: [5, 10, 21, 63]
   mean_reversion:
     enabled: true
-    weight: 0.20
+    weight: 0.15
     z_score_entry: 2.0
     z_score_exit: 0.5
     lookback: 20
   ml_ensemble:
     enabled: true
-    weight: 0.30
+    weight: 0.25
     retrain_interval_hours: 24
     features:
       - rsi_14
@@ -67,15 +67,30 @@ strategies:
       - price_vs_sma200
   volatility_breakout:
     enabled: true
-    weight: 0.15
+    weight: 0.12
     atr_multiplier: 1.5
     lookback: 20
   trend_following:
     enabled: true
-    weight: 0.10
+    weight: 0.08
     fast_ma: 10
     slow_ma: 50
     signal_ma: 200
+  pairs_trading:
+    enabled: true
+    weight: 0.12
+    lookback: 60
+    z_score_entry: 2.0
+    z_score_exit: 0.5
+    min_half_life: 5
+    max_half_life: 60
+    max_pairs: 10
+  sentiment:
+    enabled: true
+    weight: 0.08
+    min_articles: 3
+    sentiment_threshold: 0.3
+    cache_hours: 4
 
 # Risk management
 risk:

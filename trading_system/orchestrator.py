@@ -17,17 +17,22 @@ from apscheduler.triggers.interval import IntervalTrigger
 from loguru import logger
 
 from trading_system.config import TradingConfig, load_config
+from trading_system.cost_model import ExecutionCostModel
 from trading_system.data_ingestion import DataIngestion
 from trading_system.execution import ExecutionEngine
 from trading_system.portfolio import PortfolioManager
+from trading_system.regime_detector import RegimeDetector
 from trading_system.risk_manager import RiskManager
 from trading_system.signal_aggregator import SignalAggregator
+from trading_system.signal_decay import SignalDecayTracker
 from trading_system.strategies import (
     MomentumStrategy,
     MeanReversionStrategy,
     MLEnsembleStrategy,
     VolatilityBreakoutStrategy,
     TrendFollowingStrategy,
+    PairsTradingStrategy,
+    SentimentStrategy,
 )
 from trading_system.utils.db import init_db
 from trading_system.utils.logger import setup_logger, log_trade
@@ -66,6 +71,24 @@ class TradingOrchestrator:
         )
         self.aggregator = SignalAggregator(self.config.strategies)
 
+        # New: Regime detection
+        self.regime_detector = RegimeDetector()
+
+        # New: Execution cost model
+        self.cost_model = ExecutionCostModel(self.config.execution)
+
+        # New: Signal decay tracker
+        base_weights = {
+            "momentum": self.config.strategies.momentum.weight,
+            "mean_reversion": self.config.strategies.mean_reversion.weight,
+            "ml_ensemble": self.config.strategies.ml_ensemble.weight,
+            "volatility_breakout": self.config.strategies.volatility_breakout.weight,
+            "trend_following": self.config.strategies.trend_following.weight,
+            "pairs_trading": self.config.strategies.pairs_trading.weight,
+            "sentiment": self.config.strategies.sentiment.weight,
+        }
+        self.signal_decay = SignalDecayTracker(base_weights)
+
         # Initialize strategies
         self.strategies = []
         sc = self.config.strategies
@@ -80,6 +103,16 @@ class TradingOrchestrator:
             self.strategies.append(VolatilityBreakoutStrategy(sc.volatility_breakout))
         if sc.trend_following.enabled:
             self.strategies.append(TrendFollowingStrategy(sc.trend_following))
+        if sc.pairs_trading.enabled:
+            self.strategies.append(PairsTradingStrategy(sc.pairs_trading))
+        if sc.sentiment.enabled:
+            self.strategies.append(
+                SentimentStrategy(
+                    sc.sentiment,
+                    api_key=self.config.alpaca.api_key,
+                    secret_key=self.config.alpaca.secret_key,
+                )
+            )
 
         logger.info(f"Loaded {len(self.strategies)} strategies: "
                      f"{[s.name for s in self.strategies]}")
@@ -127,16 +160,25 @@ class TradingOrchestrator:
                 logger.warning("No market data available")
                 return
 
-            # 5. Get latest prices
+            # 5. Regime detection — adjusts strategy weights
+            regime_state = self.regime_detector.detect(enriched)
+            self.aggregator.set_regime_adjustments(regime_state.strategy_weights)
+            logger.info(
+                f"Regime: {regime_state.regime.name} "
+                f"(conf={regime_state.confidence:.2f}, "
+                f"pos_scale={regime_state.position_scale:.2f})"
+            )
+
+            # 6. Get latest prices
             prices = self.data.get_latest_quotes(list(enriched.keys()))
             if not prices:
                 # Fallback to last close
                 prices = {sym: df.iloc[-1]["close"] for sym, df in enriched.items() if not df.empty}
 
-            # 6. Check stops on existing positions
+            # 7. Check stops on existing positions
             self._check_stops_with_prices(prices)
 
-            # 7. Generate signals from all strategies
+            # 8. Generate signals from all strategies
             current_positions = self.portfolio.get_current_positions_qty()
             all_signals = []
 
@@ -153,9 +195,40 @@ class TradingOrchestrator:
                 except Exception as e:
                     logger.error(f"Strategy {strategy.name} failed: {e}")
 
-            # 8. Aggregate signals
+            # 9. Aggregate signals (regime-adjusted weights applied internally)
             consensus = self.aggregator.aggregate(all_signals)
             logger.info(f"Consensus: {len(consensus)} actionable signals")
+
+            # 10. Cost model filter — skip trades where cost > expected alpha
+            cost_filtered = []
+            for sig in consensus:
+                price = prices.get(sig.symbol, 0)
+                if price <= 0:
+                    continue
+                vol = sig.metadata.get("volatility_21d", 0.2)
+                avg_vol = sig.metadata.get("avg_volume", 1_000_000)
+                est_qty = (self.portfolio.equity * 0.03) / price  # rough estimate
+                cost_est = self.cost_model.estimate_cost(
+                    symbol=sig.symbol,
+                    qty=est_qty,
+                    price=price,
+                    side="buy" if sig.is_buy else "sell",
+                    volatility=vol,
+                    avg_volume=avg_vol,
+                )
+                if self.cost_model.should_trade(sig.strength, cost_est):
+                    cost_filtered.append(sig)
+                else:
+                    logger.info(
+                        f"  Skipping {sig.symbol}: cost {cost_est.total_cost_pct:.4f}% "
+                        f"> edge {sig.strength:.4f}"
+                    )
+            consensus = cost_filtered
+
+            # 11. Apply regime position scale to signals
+            if regime_state.position_scale < 1.0:
+                for sig in consensus:
+                    sig.metadata["regime_scale"] = regime_state.position_scale
 
             for sig in consensus[:5]:  # Log top 5
                 logger.info(
@@ -164,13 +237,22 @@ class TradingOrchestrator:
                     f"[{sig.strategy}]"
                 )
 
-            # 9. Execute trades
+            # 12. Execute trades
             if consensus:
-                order_ids = self.portfolio.process_signals(consensus, prices)
+                order_ids = self.portfolio.process_signals(consensus, prices, enriched)
                 logger.info(f"Placed {len(order_ids)} orders")
 
-            # 10. Take portfolio snapshot
+            # 13. Take portfolio snapshot
             self.portfolio.take_snapshot()
+
+            # 14. Log signal decay stats periodically
+            decay_stats = self.signal_decay.get_strategy_stats()
+            for strat, stats in decay_stats.items():
+                if stats["signal_count"] > 0:
+                    logger.debug(
+                        f"  Decay[{strat}]: hit={stats['hit_rate']:.2f} "
+                        f"IC={stats['ic']:.3f} score={stats['score']:.3f}"
+                    )
 
             elapsed = (datetime.utcnow() - cycle_start).total_seconds()
             logger.info(f"Cycle completed in {elapsed:.1f}s")
@@ -262,6 +344,14 @@ class TradingOrchestrator:
         # Final snapshot
         try:
             self.portfolio.take_snapshot()
+        except Exception:
+            pass
+
+        # Log final slippage stats
+        try:
+            slippage = self.cost_model.get_slippage_stats()
+            if slippage:
+                logger.info(f"Session slippage stats: {slippage}")
         except Exception:
             pass
 

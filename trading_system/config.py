@@ -112,12 +112,33 @@ class StrategyTrendConfig(BaseModel):
     signal_ma: int = 200
 
 
+class StrategyPairsConfig(BaseModel):
+    enabled: bool = True
+    weight: float = 0.15
+    lookback: int = 60
+    z_score_entry: float = 2.0
+    z_score_exit: float = 0.5
+    min_half_life: int = 5
+    max_half_life: int = 60
+    max_pairs: int = 10
+
+
+class StrategySentimentConfig(BaseModel):
+    enabled: bool = True
+    weight: float = 0.10
+    min_articles: int = 3
+    sentiment_threshold: float = 0.3
+    cache_hours: int = 4
+
+
 class StrategiesConfig(BaseModel):
     momentum: StrategyMomentumConfig = StrategyMomentumConfig()
     mean_reversion: StrategyMeanReversionConfig = StrategyMeanReversionConfig()
     ml_ensemble: StrategyMLEnsembleConfig = StrategyMLEnsembleConfig()
     volatility_breakout: StrategyVolBreakoutConfig = StrategyVolBreakoutConfig()
     trend_following: StrategyTrendConfig = StrategyTrendConfig()
+    pairs_trading: StrategyPairsConfig = StrategyPairsConfig()
+    sentiment: StrategySentimentConfig = StrategySentimentConfig()
 
 
 class TradingConfig(BaseModel):
