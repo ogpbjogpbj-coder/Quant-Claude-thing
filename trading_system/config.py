@@ -38,9 +38,9 @@ class RiskConfig(BaseModel):
     max_daily_loss_pct: float = 5.0
     max_weekly_loss_pct: float = 8.0
     max_drawdown_pct: float = 15.0
-    max_open_positions: int = 30
-    max_sector_exposure_pct: float = 30.0
-    max_correlation_threshold: float = 0.90
+    max_open_positions: int = 12
+    max_sector_exposure_pct: float = 25.0
+    max_correlation_threshold: float = 0.70
     stop_loss_atr_multiplier: float = 2.0
     take_profit_atr_multiplier: float = 4.0
     min_sharpe_ratio: float = 0.5

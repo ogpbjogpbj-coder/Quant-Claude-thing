@@ -178,7 +178,8 @@ class TestSignalAggregator:
         ]
 
         result = agg.aggregate(signals)
-        assert len(result) == 2
+        # MSFT has only 1 strategy so it should be filtered out (require 2+)
+        assert len(result) == 1
 
         aapl = [s for s in result if s.symbol == "AAPL"][0]
         assert aapl.direction > 0  # Both agreed on buy

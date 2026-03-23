@@ -23,6 +23,7 @@ SECTOR_MAP = {
     "AMZN": "Consumer Discretionary", "NVDA": "Technology", "META": "Technology",
     "TSLA": "Consumer Discretionary", "AMD": "Technology",
     "JPM": "Financials", "V": "Financials", "MA": "Financials", "BAC": "Financials",
+    "FIG": "Financials",
     "UNH": "Healthcare", "JNJ": "Healthcare", "LLY": "Healthcare",
     "ABBV": "Healthcare", "MRK": "Healthcare", "TMO": "Healthcare",
     "PG": "Consumer Staples", "COST": "Consumer Staples", "PEP": "Consumer Staples",
@@ -30,6 +31,17 @@ SECTOR_MAP = {
     "XOM": "Energy", "CVX": "Energy",
     "AVGO": "Technology", "CRM": "Technology", "ADBE": "Technology",
     "NFLX": "Communication Services",
+    # Metals & Mining
+    "GLD": "Materials", "SLV": "Materials", "IAU": "Materials", "PSLV": "Materials",
+    "NEM": "Materials", "AEM": "Materials", "KGC": "Materials", "AGI": "Materials",
+    "WPM": "Materials", "RGLD": "Materials", "CDE": "Materials", "HL": "Materials",
+    "AG": "Materials", "IAG": "Materials", "COPX": "Materials", "SCCO": "Materials",
+    "MOS": "Materials",
+    # China / EM ETFs
+    "FXI": "EM ETF", "KWEB": "EM ETF",
+    # Industrials / Defense
+    "BA": "Industrials", "HON": "Industrials", "PANW": "Technology",
+    "QCOM": "Technology", "IDCC": "Technology",
 }
 
 
@@ -167,8 +179,15 @@ class PortfolioManager:
                         max_corr = max(max_corr, corr)
 
             threshold = self.config.risk.max_correlation_threshold
+            if max_corr > 0.85:
+                # Hard block: too correlated with existing position
+                logger.info(
+                    f"Correlation BLOCK for {symbol}: "
+                    f"max_corr={max_corr:.2f} > 0.85 hard limit"
+                )
+                return 0.0
             if max_corr > threshold:
-                scale = max(0.2, 1.0 - (max_corr - threshold) / (1.0 - threshold))
+                scale = max(0.3, 1.0 - (max_corr - threshold) / (1.0 - threshold))
                 logger.info(
                     f"Correlation scale for {symbol}: {scale:.2f} "
                     f"(max_corr={max_corr:.2f})"
@@ -322,13 +341,12 @@ class PortfolioManager:
 
             tracked.update_extremes(price)
 
-            # Calculate trailing stop
-            if tracked.stop_loss > 0 and hasattr(self, '_data_cache'):
-                # Use ATR if available, else use fixed stop
-                pass
+            # Ensure every position has a stop loss (3% max loss from entry)
+            if tracked.stop_loss <= 0:
+                tracked.stop_loss = tracked.avg_entry * 0.97
 
             # Check stop loss
-            if tracked.stop_loss > 0 and price <= tracked.stop_loss:
+            if price <= tracked.stop_loss:
                 loss_pct = (tracked.avg_entry - price) / tracked.avg_entry * 100
                 logger.warning(
                     f"STOP LOSS triggered for {sym}: "
@@ -349,12 +367,15 @@ class PortfolioManager:
                 self.execution.close_position(sym, reason="take_profit")
                 triggered.append(sym)
 
-            # Update trailing stop (ratchet up only)
-            elif tracked.qty > 0 and tracked.highest_price > tracked.avg_entry:
-                # Simple trailing: 2 ATR or 5% from high, whichever is tighter
-                pct_trail = tracked.highest_price * 0.95
+            # Update trailing stop (ratchet up from any high, not just profit)
+            elif tracked.qty > 0:
+                pct_trail = tracked.highest_price * 0.97  # 3% trail from high
                 new_stop = max(tracked.stop_loss, pct_trail)
                 if new_stop > tracked.stop_loss:
+                    logger.debug(
+                        f"Trailing stop raised for {sym}: "
+                        f"${tracked.stop_loss:.2f} -> ${new_stop:.2f}"
+                    )
                     tracked.stop_loss = new_stop
 
         return triggered
