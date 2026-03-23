@@ -9,6 +9,7 @@ from trading_system.strategies.trend_following import TrendFollowingStrategy
 from trading_system.strategies.pairs_trading import PairsTradingStrategy
 from trading_system.strategies.sentiment import SentimentStrategy
 from trading_system.strategies.adaptive import AdaptiveStrategy
+from trading_system.strategies.catalyst import CatalystStrategy
 
 __all__ = [
     "BaseStrategy",
@@ -21,4 +22,5 @@ __all__ = [
     "PairsTradingStrategy",
     "SentimentStrategy",
     "AdaptiveStrategy",
+    "CatalystStrategy",
 ]

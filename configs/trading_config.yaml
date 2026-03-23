@@ -93,12 +93,24 @@ strategies:
     cache_hours: 4
   adaptive:
     enabled: true
-    weight: 0.16
+    weight: 0.12
     min_trades_to_learn: 20
     learning_lookback: 200
     min_rule_confidence: 0.55
     max_rules: 30
     evolution_interval_hours: 6
+  catalyst:
+    enabled: true
+    weight: 0.15
+    news_lookback_days: 7
+    min_catalyst_score: 0.4
+    cache_hours: 2
+    wider_stop_multiplier: 4.0  # Wider stops for longer holding
+    target_multiplier: 6.0      # Bigger targets for event-driven
+    min_volume_surge: 1.5       # Require volume confirmation
+    earnings_boost: 0.3         # Extra weight for earnings catalysts
+    max_confidence: 0.80
+    min_articles: 2
 
 # Risk management
 risk:

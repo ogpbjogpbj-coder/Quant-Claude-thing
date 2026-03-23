@@ -36,6 +36,7 @@ from trading_system.strategies import (
     PairsTradingStrategy,
     SentimentStrategy,
     AdaptiveStrategy,
+    CatalystStrategy,
 )
 from trading_system.strategies.base import Signal
 from trading_system.trade_journal import TradeJournal
@@ -95,6 +96,7 @@ class TradingOrchestrator:
             "pairs_trading": self.config.strategies.pairs_trading.weight,
             "sentiment": self.config.strategies.sentiment.weight,
             "adaptive": self.config.strategies.adaptive.weight,
+            "catalyst": self.config.strategies.catalyst.weight,
         }
         self.signal_decay = SignalDecayTracker(base_weights)
 
@@ -143,6 +145,14 @@ class TradingOrchestrator:
             )
         if sc.adaptive.enabled:
             self.strategies.append(AdaptiveStrategy(sc.adaptive))
+        if sc.catalyst.enabled:
+            self.strategies.append(
+                CatalystStrategy(
+                    sc.catalyst,
+                    api_key=self.config.alpaca.api_key,
+                    secret_key=self.config.alpaca.secret_key,
+                )
+            )
 
         logger.info(f"Loaded {len(self.strategies)} strategies: "
                      f"{[s.name for s in self.strategies]}")

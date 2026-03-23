@@ -141,6 +141,20 @@ class StrategyAdaptiveConfig(BaseModel):
     evolution_interval_hours: int = 6
 
 
+class StrategyCatalystConfig(BaseModel):
+    enabled: bool = True
+    weight: float = 0.15
+    news_lookback_days: int = 7
+    min_catalyst_score: float = 0.4
+    cache_hours: int = 2
+    wider_stop_multiplier: float = 4.0
+    target_multiplier: float = 6.0
+    min_volume_surge: float = 1.5
+    earnings_boost: float = 0.3
+    max_confidence: float = 0.80
+    min_articles: int = 2
+
+
 class StrategiesConfig(BaseModel):
     momentum: StrategyMomentumConfig = StrategyMomentumConfig()
     mean_reversion: StrategyMeanReversionConfig = StrategyMeanReversionConfig()
@@ -150,6 +164,7 @@ class StrategiesConfig(BaseModel):
     pairs_trading: StrategyPairsConfig = StrategyPairsConfig()
     sentiment: StrategySentimentConfig = StrategySentimentConfig()
     adaptive: StrategyAdaptiveConfig = StrategyAdaptiveConfig()
+    catalyst: StrategyCatalystConfig = StrategyCatalystConfig()
 
 
 class UniverseConfig(BaseModel):

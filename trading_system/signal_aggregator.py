@@ -27,6 +27,7 @@ class SignalAggregator:
             "pairs_trading": config.pairs_trading.weight,
             "sentiment": config.sentiment.weight,
             "adaptive": config.adaptive.weight,
+            "catalyst": config.catalyst.weight,
         }
         self._regime_adjustments: dict[str, float] = {}
 
