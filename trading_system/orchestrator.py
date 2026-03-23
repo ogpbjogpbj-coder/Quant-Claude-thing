@@ -40,6 +40,7 @@ from trading_system.strategies import (
 from trading_system.strategies.base import Signal
 from trading_system.trade_journal import TradeJournal
 from trading_system.strategy_evolver import StrategyEvolver
+from trading_system.universe_scanner import UniverseScanner
 from trading_system.utils.db import init_db
 from trading_system.utils.logger import setup_logger, log_trade
 
@@ -97,7 +98,17 @@ class TradingOrchestrator:
         }
         self.signal_decay = SignalDecayTracker(base_weights)
 
-        # === NEW: Adaptive learning components ===
+        # === Dynamic universe scanner ===
+        self.universe_scanner: Optional[UniverseScanner] = None
+        if self.config.universe_config.dynamic:
+            self.universe_scanner = UniverseScanner(self.config)
+            self.universe_scanner.target_size = self.config.universe_config.target_size
+            self.universe_scanner.min_avg_volume = self.config.universe_config.min_avg_volume
+            self.universe_scanner.penny_min_volume = self.config.universe_config.penny_min_volume
+            self.universe_scanner.min_price = self.config.universe_config.min_price
+            self.universe_scanner.penny_threshold = self.config.universe_config.penny_threshold
+
+        # === Adaptive learning components ===
         self.trade_journal = TradeJournal()
         self.strategy_evolver = StrategyEvolver()
 
@@ -135,7 +146,11 @@ class TradingOrchestrator:
 
         logger.info(f"Loaded {len(self.strategies)} strategies: "
                      f"{[s.name for s in self.strategies]}")
-        logger.info(f"Trading universe: {len(self.config.universe)} symbols")
+        if self.universe_scanner:
+            logger.info(f"Dynamic universe enabled (target ~{self.config.universe_config.target_size} symbols, "
+                         f"including penny stocks >={self.config.universe_config.penny_min_volume:,} vol)")
+        else:
+            logger.info(f"Static universe: {len(self.config.universe)} symbols")
 
     def _initialize_risk(self) -> None:
         """Set risk manager starting reference points."""
@@ -172,7 +187,12 @@ class TradingOrchestrator:
                 self._check_stops()
                 return
 
-            # 4. Fetch enriched market data
+            # 4. Refresh universe if dynamic scanning is enabled
+            if self.universe_scanner:
+                self.config.universe = self.universe_scanner.get_universe()
+                logger.info(f"Dynamic universe: {len(self.config.universe)} symbols")
+
+            # 5. Fetch enriched market data
             enriched = self.data.get_enriched_data()
             if not enriched:
                 logger.warning("No market data available")

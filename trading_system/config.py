@@ -152,6 +152,16 @@ class StrategiesConfig(BaseModel):
     adaptive: StrategyAdaptiveConfig = StrategyAdaptiveConfig()
 
 
+class UniverseConfig(BaseModel):
+    dynamic: bool = True
+    target_size: int = 500
+    min_avg_volume: int = 200_000
+    penny_min_volume: int = 1_000_000
+    min_price: float = 0.10
+    penny_threshold: float = 5.0
+    refresh_hours: int = 12
+
+
 class TradingConfig(BaseModel):
     alpaca: AlpacaConfig = AlpacaConfig()
     universe: list[str] = [
@@ -160,6 +170,7 @@ class TradingConfig(BaseModel):
         "XOM", "CVX", "AVGO", "LLY", "COST", "ABBV", "MRK", "PEP", "TMO",
         "CRM", "ADBE", "NFLX",
     ]
+    universe_config: UniverseConfig = UniverseConfig()
     strategies: StrategiesConfig = StrategiesConfig()
     risk: RiskConfig = RiskConfig()
     execution: ExecutionConfig = ExecutionConfig()
