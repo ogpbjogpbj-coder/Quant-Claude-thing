@@ -1,0 +1,26 @@
+version: "3.9"
+
+services:
+  trader:
+    build: .
+    container_name: quantclaude-trader
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./configs:/app/configs
+    restart: unless-stopped
+    command: ["run"]
+
+  trader-paper:
+    build: .
+    container_name: quantclaude-paper
+    env_file: .env
+    environment:
+      - ALPACA_BASE_URL=https://paper-api.alpaca.markets
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./configs:/app/configs
+    restart: unless-stopped
+    command: ["run", "--paper"]

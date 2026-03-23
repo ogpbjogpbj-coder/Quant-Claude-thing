@@ -1,0 +1,96 @@
+# Paper trading config — $1,000 starting capital, 1-month test
+system:
+  name: "QuantClaude Paper Test ($1k)"
+  version: "1.0.0"
+  mode: "paper"
+
+universe:
+  symbols:
+    - SPY
+    - QQQ
+    - AAPL
+    - MSFT
+    - GOOGL
+    - AMZN
+    - NVDA
+    - META
+    - TSLA
+    - AMD
+    - JPM
+    - V
+
+strategies:
+  momentum:
+    enabled: true
+    weight: 0.25
+    lookback_periods: [5, 10, 21, 63]
+  mean_reversion:
+    enabled: true
+    weight: 0.20
+    z_score_entry: 2.0
+    z_score_exit: 0.5
+    lookback: 20
+  ml_ensemble:
+    enabled: true
+    weight: 0.30
+    retrain_interval_hours: 24
+    features:
+      - rsi_14
+      - macd_signal
+      - bb_position
+      - volume_ratio
+      - atr_pct
+      - returns_5d
+      - returns_21d
+      - volatility_21d
+      - price_vs_sma50
+      - price_vs_sma200
+  volatility_breakout:
+    enabled: true
+    weight: 0.15
+    atr_multiplier: 1.5
+    lookback: 20
+  trend_following:
+    enabled: true
+    weight: 0.10
+    fast_ma: 10
+    slow_ma: 50
+    signal_ma: 200
+
+# Conservative risk for small account
+risk:
+  max_portfolio_risk_pct: 2.0
+  max_position_size_pct: 10.0        # Allow bigger % since account is small
+  max_single_trade_risk_pct: 1.5
+  max_daily_loss_pct: 5.0
+  max_weekly_loss_pct: 8.0
+  max_drawdown_pct: 15.0
+  max_open_positions: 5               # Fewer positions for small account
+  max_sector_exposure_pct: 40.0
+  max_correlation_threshold: 0.85
+  stop_loss_atr_multiplier: 2.0
+  take_profit_atr_multiplier: 4.0
+  min_sharpe_ratio: 0.3
+  position_sizing: "kelly"
+  kelly_fraction: 0.25
+
+execution:
+  order_type: "market"                 # Market orders for paper (instant fill)
+  limit_offset_pct: 0.05
+  max_slippage_pct: 0.2
+  retry_attempts: 3
+  retry_delay_seconds: 5
+  time_in_force: "day"
+  enable_fractional: true              # Critical for $1k account
+
+schedule:
+  market_open_offset_minutes: 5        # Start 5min after open
+  market_close_offset_minutes: 5
+  rebalance_interval_minutes: 30
+  data_refresh_interval_minutes: 5
+
+data:
+  lookback_days: 120
+  bar_timeframe: "1Day"
+  intraday_timeframe: "15Min"
+  cache_ttl_minutes: 5
