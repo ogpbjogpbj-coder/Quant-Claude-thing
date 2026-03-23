@@ -114,7 +114,7 @@ class ExecutionEngine:
                         qty=round(qty, 4) if self.config.enable_fractional else int(qty),
                         side=order_side,
                         type=OrderType.LIMIT,
-                        time_in_force=TimeInForce(self.config.time_in_force.upper()),
+                        time_in_force=TimeInForce(self.config.time_in_force.lower()),
                         limit_price=limit_price,
                     )
                 else:
@@ -123,7 +123,7 @@ class ExecutionEngine:
                         qty=round(qty, 4) if self.config.enable_fractional else int(qty),
                         side=order_side,
                         type=OrderType.MARKET,
-                        time_in_force=TimeInForce(self.config.time_in_force.upper()),
+                        time_in_force=TimeInForce(self.config.time_in_force.lower()),
                     )
 
                 order = self.client.submit_order(order_request)
