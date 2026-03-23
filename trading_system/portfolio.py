@@ -260,6 +260,10 @@ class PortfolioManager:
                 regime_scale = signal.metadata.get("regime_scale", 1.0)
                 size_dollars *= regime_scale
 
+                # Apply drawdown recovery scaling
+                dd_scale = self.risk_manager.get_drawdown_scale(self._equity)
+                size_dollars *= dd_scale
+
                 if size_dollars <= 0:
                     continue
 
@@ -269,16 +273,31 @@ class PortfolioManager:
                 if qty <= 0:
                     continue
 
-                order_id = self.execution.place_order(
-                    symbol=signal.symbol,
-                    qty=round(qty, 4),
-                    side="buy",
-                    price=price,
-                    strategy=signal.strategy,
-                    signal_strength=signal.strength,
-                    stop_loss=signal.stop_loss or 0,
-                    take_profit=signal.take_profit or 0,
-                )
+                order_value = qty * price
+                if order_value > self.config.execution.vwap_split_threshold:
+                    order_id = self.execution.place_twap_order(
+                        symbol=signal.symbol,
+                        total_qty=round(qty, 4),
+                        side="buy",
+                        price=price,
+                        num_slices=self.config.execution.vwap_num_slices,
+                        slice_delay=self.config.execution.vwap_slice_delay_seconds,
+                        strategy=signal.strategy,
+                        signal_strength=signal.strength,
+                        stop_loss=signal.stop_loss or 0,
+                        take_profit=signal.take_profit or 0,
+                    )
+                else:
+                    order_id = self.execution.place_order(
+                        symbol=signal.symbol,
+                        qty=round(qty, 4),
+                        side="buy",
+                        price=price,
+                        strategy=signal.strategy,
+                        signal_strength=signal.strength,
+                        stop_loss=signal.stop_loss or 0,
+                        take_profit=signal.take_profit or 0,
+                    )
 
                 if order_id:
                     # Update tracking
@@ -306,7 +325,7 @@ class PortfolioManager:
                     order_ids.append(order_id)
 
             elif signal.is_sell and current_qty > 0:
-                # Sell: reduce or close position
+                # Sell: reduce or close existing long position
                 sell_fraction = min(abs(signal.direction), 1.0)
                 sell_qty = round(current_qty * sell_fraction, 4)
 
@@ -314,7 +333,6 @@ class PortfolioManager:
                     continue
 
                 if sell_fraction >= 0.9:
-                    # Close entire position
                     order_id = self.execution.close_position(
                         signal.symbol, reason=signal.strategy
                     )
@@ -329,6 +347,70 @@ class PortfolioManager:
                     )
 
                 if order_id:
+                    order_ids.append(order_id)
+
+            elif signal.is_sell and current_qty == 0 and self.config.execution.enable_short_selling:
+                # Short sell: open a new short position
+                if not self._check_sector_limit(signal.symbol, est_size):
+                    continue
+
+                volatility = signal.metadata.get("volatility_21d", 0.2)
+                size_dollars = self.risk_manager.calculate_position_size(
+                    signal=signal,
+                    price=price,
+                    portfolio_equity=self._equity,
+                    current_position_value=0,
+                    volatility=volatility,
+                )
+
+                if size_dollars == 0:
+                    continue
+
+                size_dollars = abs(size_dollars)
+
+                corr_scale = self._check_correlation(signal.symbol, enriched_data)
+                size_dollars *= corr_scale
+
+                regime_scale = signal.metadata.get("regime_scale", 1.0)
+                size_dollars *= regime_scale
+
+                if size_dollars <= 0:
+                    continue
+
+                qty = size_dollars / price
+                if not self.config.execution.enable_fractional:
+                    qty = int(qty)
+                if qty <= 0:
+                    continue
+
+                order_id = self.execution.place_order(
+                    symbol=signal.symbol,
+                    qty=round(qty, 4),
+                    side="sell",
+                    price=price,
+                    strategy=signal.strategy,
+                    signal_strength=signal.strength,
+                    stop_loss=signal.stop_loss or (price * 1.05),
+                    take_profit=signal.take_profit or (price * 0.90),
+                )
+
+                if order_id:
+                    hold_days = signal.metadata.get(
+                        "max_holding_days",
+                        self.config.risk.max_holding_days,
+                    )
+                    self.tracked[signal.symbol] = TrackedPosition(
+                        symbol=signal.symbol,
+                        qty=-qty,  # Negative qty = short
+                        avg_entry=price,
+                        side="short",
+                        strategy=signal.strategy,
+                        stop_loss=signal.stop_loss or (price * 1.05),
+                        take_profit=signal.take_profit or (price * 0.90),
+                        highest_price=price,
+                        lowest_price=price,
+                        max_holding_days=hold_days,
+                    )
                     order_ids.append(order_id)
 
         return order_ids
@@ -364,42 +446,81 @@ class PortfolioManager:
                 triggered.append(sym)
                 continue
 
-            # Ensure every position has a stop loss (3% max loss from entry)
-            if tracked.stop_loss <= 0:
-                tracked.stop_loss = tracked.avg_entry * 0.97
+            is_short = tracked.qty < 0
 
-            # Check stop loss
-            if price <= tracked.stop_loss:
-                loss_pct = (tracked.avg_entry - price) / tracked.avg_entry * 100
-                logger.warning(
-                    f"STOP LOSS triggered for {sym}: "
-                    f"price=${price:.2f} <= stop=${tracked.stop_loss:.2f} "
-                    f"(loss={loss_pct:.1f}%)"
-                )
-                self.execution.close_position(sym, reason="stop_loss")
-                triggered.append(sym)
+            if is_short:
+                # --- Short position stop/target logic (inverted) ---
+                if tracked.stop_loss <= 0:
+                    tracked.stop_loss = tracked.avg_entry * 1.03  # 3% above entry
 
-            # Check take profit
-            elif tracked.take_profit > 0 and price >= tracked.take_profit:
-                gain_pct = (price - tracked.avg_entry) / tracked.avg_entry * 100
-                logger.info(
-                    f"TAKE PROFIT triggered for {sym}: "
-                    f"price=${price:.2f} >= target=${tracked.take_profit:.2f} "
-                    f"(gain={gain_pct:.1f}%)"
-                )
-                self.execution.close_position(sym, reason="take_profit")
-                triggered.append(sym)
-
-            # Update trailing stop (ratchet up from any high, not just profit)
-            elif tracked.qty > 0:
-                pct_trail = tracked.highest_price * 0.97  # 3% trail from high
-                new_stop = max(tracked.stop_loss, pct_trail)
-                if new_stop > tracked.stop_loss:
-                    logger.debug(
-                        f"Trailing stop raised for {sym}: "
-                        f"${tracked.stop_loss:.2f} -> ${new_stop:.2f}"
+                # Stop loss for short: price rises above stop
+                if price >= tracked.stop_loss:
+                    loss_pct = (price - tracked.avg_entry) / tracked.avg_entry * 100
+                    logger.warning(
+                        f"STOP LOSS (short) triggered for {sym}: "
+                        f"price=${price:.2f} >= stop=${tracked.stop_loss:.2f} "
+                        f"(loss={loss_pct:.1f}%)"
                     )
-                    tracked.stop_loss = new_stop
+                    self.execution.close_position(sym, reason="stop_loss")
+                    triggered.append(sym)
+
+                # Take profit for short: price falls below target
+                elif tracked.take_profit > 0 and price <= tracked.take_profit:
+                    gain_pct = (tracked.avg_entry - price) / tracked.avg_entry * 100
+                    logger.info(
+                        f"TAKE PROFIT (short) triggered for {sym}: "
+                        f"price=${price:.2f} <= target=${tracked.take_profit:.2f} "
+                        f"(gain={gain_pct:.1f}%)"
+                    )
+                    self.execution.close_position(sym, reason="take_profit")
+                    triggered.append(sym)
+
+                # Trailing stop for short: ratchet down from lowest price
+                else:
+                    pct_trail = tracked.lowest_price * 1.03  # 3% above low
+                    new_stop = min(tracked.stop_loss, pct_trail)
+                    if new_stop < tracked.stop_loss:
+                        logger.debug(
+                            f"Trailing stop lowered (short) for {sym}: "
+                            f"${tracked.stop_loss:.2f} -> ${new_stop:.2f}"
+                        )
+                        tracked.stop_loss = new_stop
+
+            else:
+                # --- Long position stop/target logic ---
+                if tracked.stop_loss <= 0:
+                    tracked.stop_loss = tracked.avg_entry * 0.97
+
+                if price <= tracked.stop_loss:
+                    loss_pct = (tracked.avg_entry - price) / tracked.avg_entry * 100
+                    logger.warning(
+                        f"STOP LOSS triggered for {sym}: "
+                        f"price=${price:.2f} <= stop=${tracked.stop_loss:.2f} "
+                        f"(loss={loss_pct:.1f}%)"
+                    )
+                    self.execution.close_position(sym, reason="stop_loss")
+                    triggered.append(sym)
+
+                elif tracked.take_profit > 0 and price >= tracked.take_profit:
+                    gain_pct = (price - tracked.avg_entry) / tracked.avg_entry * 100
+                    logger.info(
+                        f"TAKE PROFIT triggered for {sym}: "
+                        f"price=${price:.2f} >= target=${tracked.take_profit:.2f} "
+                        f"(gain={gain_pct:.1f}%)"
+                    )
+                    self.execution.close_position(sym, reason="take_profit")
+                    triggered.append(sym)
+
+                # Trailing stop: ratchet up from highest price
+                else:
+                    pct_trail = tracked.highest_price * 0.97
+                    new_stop = max(tracked.stop_loss, pct_trail)
+                    if new_stop > tracked.stop_loss:
+                        logger.debug(
+                            f"Trailing stop raised for {sym}: "
+                            f"${tracked.stop_loss:.2f} -> ${new_stop:.2f}"
+                        )
+                        tracked.stop_loss = new_stop
 
         return triggered
 

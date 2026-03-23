@@ -1,7 +1,7 @@
 # Trading System Configuration
 system:
   name: "QuantClaude AI Trading System"
-  version: "1.0.0"
+  version: "2.0.0"
   mode: "live"  # live | paper | backtest
 
 # Universe of tradeable symbols
@@ -38,21 +38,21 @@ universe:
     - ADBE
     - NFLX
 
-# Strategy weights (must sum to 1.0)
+# Strategy weights (normalized internally)
 strategies:
   momentum:
     enabled: true
-    weight: 0.17
+    weight: 0.14
     lookback_periods: [5, 10, 21, 63]
   mean_reversion:
     enabled: true
-    weight: 0.12
+    weight: 0.10
     z_score_entry: 2.0
     z_score_exit: 0.5
     lookback: 20
   ml_ensemble:
     enabled: true
-    weight: 0.20
+    weight: 0.17
     retrain_interval_hours: 24
     features:
       - rsi_14
@@ -67,18 +67,18 @@ strategies:
       - price_vs_sma200
   volatility_breakout:
     enabled: true
-    weight: 0.10
+    weight: 0.08
     atr_multiplier: 1.5
     lookback: 20
   trend_following:
     enabled: true
-    weight: 0.08
+    weight: 0.07
     fast_ma: 10
     slow_ma: 50
     signal_ma: 200
   pairs_trading:
     enabled: true
-    weight: 0.10
+    weight: 0.08
     lookback: 60
     z_score_entry: 2.0
     z_score_exit: 0.5
@@ -87,13 +87,13 @@ strategies:
     max_pairs: 10
   sentiment:
     enabled: true
-    weight: 0.07
+    weight: 0.06
     min_articles: 3
     sentiment_threshold: 0.3
     cache_hours: 4
   adaptive:
     enabled: true
-    weight: 0.12
+    weight: 0.10
     min_trades_to_learn: 20
     learning_lookback: 200
     min_rule_confidence: 0.55
@@ -101,7 +101,7 @@ strategies:
     evolution_interval_hours: 6
   catalyst:
     enabled: true
-    weight: 0.15
+    weight: 0.12
     news_lookback_days: 7
     min_catalyst_score: 0.4
     cache_hours: 2
@@ -111,7 +111,14 @@ strategies:
     earnings_boost: 0.3         # Extra weight for earnings catalysts
     max_confidence: 0.80
     min_articles: 2
-    max_holding_days: 21            # Auto-exit after 3 weeks
+    max_holding_days: 21        # Auto-exit after 3 weeks
+  sector_rotation:
+    enabled: true
+    weight: 0.08
+    rotation_lookback: 21       # Days to measure sector momentum
+    top_n_sectors: 3            # Overweight top N sectors
+    bottom_n_sectors: 2         # Underweight/short bottom N
+    min_sector_stocks: 2        # Need N stocks to represent sector
 
 # Risk management
 risk:
@@ -130,6 +137,12 @@ risk:
   min_sharpe_ratio: 0.5              # Min signal quality to trade
   position_sizing: "kelly"           # kelly | equal | volatility_parity
   kelly_fraction: 0.25               # Use quarter-Kelly for safety
+  # Drawdown recovery mode
+  drawdown_recovery_enabled: true
+  drawdown_caution_pct: 5.0          # Start scaling down positions at 5% drawdown
+  drawdown_severe_pct: 10.0          # Heavy scaling at 10% drawdown
+  recovery_min_scale: 0.2            # Minimum 20% of normal position size
+  recovery_confidence_boost: 0.15    # Require 15% higher confidence during recovery
 
 # Execution
 execution:
@@ -140,6 +153,10 @@ execution:
   retry_delay_seconds: 5
   time_in_force: "day"
   enable_fractional: true
+  enable_short_selling: true         # Allow opening short positions
+  vwap_split_threshold: 5000.0      # Split orders above $5k into TWAP slices
+  vwap_num_slices: 4                # Number of time slices
+  vwap_slice_delay_seconds: 30      # Seconds between slices
 
 # Scheduling
 schedule:

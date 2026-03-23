@@ -28,6 +28,7 @@ class SignalAggregator:
             "sentiment": config.sentiment.weight,
             "adaptive": config.adaptive.weight,
             "catalyst": config.catalyst.weight,
+            "sector_rotation": config.sector_rotation.weight,
         }
         self._regime_adjustments: dict[str, float] = {}
 

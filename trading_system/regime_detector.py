@@ -52,6 +52,7 @@ _BASE_STRATEGIES = [
     "ml_ensemble",
     "volatility_breakout",
     "trend_following",
+    "sector_rotation",
 ]
 
 _REGIME_WEIGHT_ADJUSTMENTS: dict[RegimeType, dict[str, float]] = {
@@ -61,6 +62,7 @@ _REGIME_WEIGHT_ADJUSTMENTS: dict[RegimeType, dict[str, float]] = {
         "ml_ensemble": 1.0,
         "volatility_breakout": 1.0,
         "trend_following": 1.5,
+        "sector_rotation": 1.3,  # Sector rotation works well in trends
     },
     RegimeType.TRENDING_DOWN: {
         "momentum": 0.7,
@@ -68,6 +70,7 @@ _REGIME_WEIGHT_ADJUSTMENTS: dict[RegimeType, dict[str, float]] = {
         "ml_ensemble": 1.0,
         "volatility_breakout": 1.0,
         "trend_following": 1.0,
+        "sector_rotation": 1.2,  # Defensive rotation valuable
     },
     RegimeType.MEAN_REVERTING: {
         "momentum": 0.5,
@@ -75,6 +78,7 @@ _REGIME_WEIGHT_ADJUSTMENTS: dict[RegimeType, dict[str, float]] = {
         "ml_ensemble": 1.0,
         "volatility_breakout": 1.0,
         "trend_following": 0.5,
+        "sector_rotation": 0.7,  # Less useful in choppy markets
     },
     RegimeType.HIGH_VOLATILITY: {
         "momentum": 0.8,
@@ -82,6 +86,7 @@ _REGIME_WEIGHT_ADJUSTMENTS: dict[RegimeType, dict[str, float]] = {
         "ml_ensemble": 0.9,
         "volatility_breakout": 1.5,
         "trend_following": 0.8,
+        "sector_rotation": 0.8,
     },
     RegimeType.LOW_VOLATILITY: {
         "momentum": 1.0,
@@ -89,6 +94,7 @@ _REGIME_WEIGHT_ADJUSTMENTS: dict[RegimeType, dict[str, float]] = {
         "ml_ensemble": 1.0,
         "volatility_breakout": 0.5,
         "trend_following": 1.0,
+        "sector_rotation": 1.0,
     },
     RegimeType.CRISIS: {
         "momentum": 0.3,
@@ -96,6 +102,7 @@ _REGIME_WEIGHT_ADJUSTMENTS: dict[RegimeType, dict[str, float]] = {
         "ml_ensemble": 0.4,
         "volatility_breakout": 0.3,
         "trend_following": 0.3,
+        "sector_rotation": 0.5,  # Defensive rotation still useful in crisis
     },
 }
 

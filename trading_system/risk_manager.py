@@ -105,6 +105,62 @@ class RiskManager:
         self._weekly_start_equity = equity
         self._week_start = datetime.utcnow()
 
+    def get_drawdown_scale(self, current_equity: float) -> float:
+        """Calculate position scale factor based on current drawdown.
+
+        Returns a multiplier between recovery_min_scale and 1.0.
+        Gradually reduces position sizes as drawdown deepens, instead of
+        binary circuit breaker halt.
+        """
+        if not self.config.drawdown_recovery_enabled:
+            return 1.0
+        if self._peak_equity <= 0:
+            return 1.0
+
+        drawdown_pct = (self._peak_equity - current_equity) / self._peak_equity * 100
+
+        if drawdown_pct < self.config.drawdown_caution_pct:
+            return 1.0
+
+        # Linear interpolation between caution and severe thresholds
+        caution = self.config.drawdown_caution_pct
+        severe = self.config.drawdown_severe_pct
+        min_scale = self.config.recovery_min_scale
+
+        if drawdown_pct >= severe:
+            scale = min_scale
+        else:
+            # Scale linearly from 1.0 at caution to min_scale at severe
+            progress = (drawdown_pct - caution) / (severe - caution)
+            scale = 1.0 - progress * (1.0 - min_scale)
+
+        logger.info(
+            f"DRAWDOWN RECOVERY: {drawdown_pct:.1f}% drawdown -> "
+            f"position scale={scale:.2f}"
+        )
+
+        return scale
+
+    def get_min_confidence_for_entry(self, current_equity: float) -> float:
+        """During drawdown recovery, require higher confidence to enter new positions."""
+        if not self.config.drawdown_recovery_enabled:
+            return 0.0
+        if self._peak_equity <= 0:
+            return 0.0
+
+        drawdown_pct = (self._peak_equity - current_equity) / self._peak_equity * 100
+
+        if drawdown_pct < self.config.drawdown_caution_pct:
+            return 0.0
+
+        # Require extra confidence proportional to drawdown
+        caution = self.config.drawdown_caution_pct
+        severe = self.config.drawdown_severe_pct
+        boost = self.config.recovery_confidence_boost
+
+        progress = min((drawdown_pct - caution) / (severe - caution), 1.0)
+        return boost * progress
+
     def filter_signals(
         self,
         signals: list[Signal],
@@ -120,6 +176,9 @@ class RiskManager:
         approved = []
         num_positions = len([v for v in current_positions.values() if abs(v) > 0])
 
+        # Drawdown recovery: require higher conviction for new entries
+        min_confidence = self.get_min_confidence_for_entry(portfolio_equity)
+
         for signal in signals:
             # Skip weak signals
             if signal.strength < self.config.min_sharpe_ratio * 0.1:
@@ -134,6 +193,16 @@ class RiskManager:
             # Allow sell signals for existing positions always
             if signal.is_sell and signal.symbol in current_positions:
                 approved.append(signal)
+                continue
+
+            # Drawdown recovery: reject low-confidence entries
+            if is_new and min_confidence > 0 and signal.confidence < min_confidence:
+                log_risk(
+                    "DRAWDOWN_RECOVERY",
+                    symbol=signal.symbol,
+                    confidence=f"{signal.confidence:.2f}",
+                    min_required=f"{min_confidence:.2f}",
+                )
                 continue
 
             # Position size limit

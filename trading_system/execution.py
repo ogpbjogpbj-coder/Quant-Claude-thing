@@ -4,6 +4,7 @@ Handles order placement, monitoring, and management with retry logic
 and slippage control.
 """
 
+import threading
 import time
 from typing import Optional
 
@@ -168,6 +169,82 @@ class ExecutionEngine:
 
         logger.error(f"All order attempts failed for {side} {qty} {symbol}")
         return None
+
+    def place_twap_order(
+        self,
+        symbol: str,
+        total_qty: float,
+        side: str,
+        price: float,
+        num_slices: int = 4,
+        slice_delay: int = 30,
+        strategy: str = "",
+        signal_strength: float = 0.0,
+        stop_loss: float = 0.0,
+        take_profit: float = 0.0,
+    ) -> Optional[str]:
+        """Split a large order into time-weighted slices (TWAP).
+
+        Places the first slice immediately and schedules the rest in a
+        background thread with delays between each slice.
+
+        Returns the order ID of the first slice.
+        """
+        if total_qty <= 0 or num_slices < 1:
+            return None
+
+        slice_qty = round(total_qty / num_slices, 4)
+        if slice_qty <= 0:
+            return self.place_order(
+                symbol=symbol, qty=total_qty, side=side, price=price,
+                strategy=strategy, signal_strength=signal_strength,
+                stop_loss=stop_loss, take_profit=take_profit,
+            )
+
+        logger.info(
+            f"TWAP: splitting {side} {total_qty:.4f} {symbol} into "
+            f"{num_slices} slices of {slice_qty:.4f}, {slice_delay}s apart"
+        )
+
+        # Place first slice immediately
+        first_id = self.place_order(
+            symbol=symbol, qty=slice_qty, side=side, price=price,
+            strategy=strategy, signal_strength=signal_strength,
+            stop_loss=stop_loss, take_profit=take_profit,
+        )
+
+        if not first_id:
+            return None
+
+        # Schedule remaining slices in background
+        remaining = num_slices - 1
+        if remaining > 0:
+            def _place_remaining():
+                for i in range(remaining):
+                    time.sleep(slice_delay)
+                    try:
+                        # Get fresh price for each slice
+                        positions = self.get_positions()
+                        current_price = price  # fallback
+                        if symbol in positions:
+                            current_price = positions[symbol].get("current_price", price)
+
+                        oid = self.place_order(
+                            symbol=symbol, qty=slice_qty, side=side,
+                            price=current_price, strategy=f"{strategy}_twap_{i+2}",
+                            signal_strength=signal_strength,
+                        )
+                        if oid:
+                            logger.info(f"TWAP slice {i+2}/{num_slices} filled for {symbol}")
+                        else:
+                            logger.warning(f"TWAP slice {i+2}/{num_slices} failed for {symbol}")
+                    except Exception as e:
+                        logger.error(f"TWAP slice {i+2} failed for {symbol}: {e}")
+
+            thread = threading.Thread(target=_place_remaining, daemon=True)
+            thread.start()
+
+        return first_id
 
     def close_position(self, symbol: str, reason: str = "") -> Optional[str]:
         """Close an entire position."""

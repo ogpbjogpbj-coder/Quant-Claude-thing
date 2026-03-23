@@ -37,6 +37,7 @@ from trading_system.strategies import (
     SentimentStrategy,
     AdaptiveStrategy,
     CatalystStrategy,
+    SectorRotationStrategy,
 )
 from trading_system.strategies.base import Signal
 from trading_system.trade_journal import TradeJournal
@@ -97,6 +98,7 @@ class TradingOrchestrator:
             "sentiment": self.config.strategies.sentiment.weight,
             "adaptive": self.config.strategies.adaptive.weight,
             "catalyst": self.config.strategies.catalyst.weight,
+            "sector_rotation": self.config.strategies.sector_rotation.weight,
         }
         self.signal_decay = SignalDecayTracker(base_weights)
 
@@ -153,6 +155,8 @@ class TradingOrchestrator:
                     secret_key=self.config.alpaca.secret_key,
                 )
             )
+        if sc.sector_rotation.enabled:
+            self.strategies.append(SectorRotationStrategy(sc.sector_rotation))
 
         logger.info(f"Loaded {len(self.strategies)} strategies: "
                      f"{[s.name for s in self.strategies]}")

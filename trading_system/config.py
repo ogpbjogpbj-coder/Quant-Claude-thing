@@ -47,6 +47,12 @@ class RiskConfig(BaseModel):
     position_sizing: str = "kelly"
     kelly_fraction: float = 0.5
     max_holding_days: int = 30  # Default max hold: auto-exit after this many days
+    # Drawdown recovery mode: gradually reduce size instead of binary halt
+    drawdown_recovery_enabled: bool = True
+    drawdown_caution_pct: float = 5.0    # Start scaling down at this drawdown %
+    drawdown_severe_pct: float = 10.0    # Heavy scaling at this drawdown %
+    recovery_min_scale: float = 0.2      # Minimum position scale during recovery
+    recovery_confidence_boost: float = 0.15  # Extra confidence required during recovery
 
 
 class ExecutionConfig(BaseModel):
@@ -57,6 +63,10 @@ class ExecutionConfig(BaseModel):
     retry_delay_seconds: int = 5
     time_in_force: str = "day"
     enable_fractional: bool = True
+    enable_short_selling: bool = True
+    vwap_split_threshold: float = 5000.0  # Split orders above this $ value
+    vwap_num_slices: int = 4              # Number of TWAP slices
+    vwap_slice_delay_seconds: int = 30    # Delay between slices
 
 
 class ScheduleConfig(BaseModel):
@@ -157,6 +167,15 @@ class StrategyCatalystConfig(BaseModel):
     max_holding_days: int = 21  # Auto-exit catalyst trades after 3 weeks
 
 
+class StrategySectorRotationConfig(BaseModel):
+    enabled: bool = True
+    weight: float = 0.10
+    rotation_lookback: int = 21    # Days to measure sector momentum
+    top_n_sectors: int = 3         # Overweight top N sectors
+    bottom_n_sectors: int = 2      # Underweight bottom N sectors
+    min_sector_stocks: int = 2     # Need at least N stocks to represent a sector
+
+
 class StrategiesConfig(BaseModel):
     momentum: StrategyMomentumConfig = StrategyMomentumConfig()
     mean_reversion: StrategyMeanReversionConfig = StrategyMeanReversionConfig()
@@ -167,6 +186,7 @@ class StrategiesConfig(BaseModel):
     sentiment: StrategySentimentConfig = StrategySentimentConfig()
     adaptive: StrategyAdaptiveConfig = StrategyAdaptiveConfig()
     catalyst: StrategyCatalystConfig = StrategyCatalystConfig()
+    sector_rotation: StrategySectorRotationConfig = StrategySectorRotationConfig()
 
 
 class UniverseConfig(BaseModel):
