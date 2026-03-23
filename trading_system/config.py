@@ -32,20 +32,20 @@ class AlpacaConfig(BaseSettings):
 
 
 class RiskConfig(BaseModel):
-    max_portfolio_risk_pct: float = 2.0
-    max_position_size_pct: float = 5.0
-    max_single_trade_risk_pct: float = 1.0
-    max_daily_loss_pct: float = 3.0
-    max_weekly_loss_pct: float = 5.0
-    max_drawdown_pct: float = 10.0
-    max_open_positions: int = 20
-    max_sector_exposure_pct: float = 25.0
-    max_correlation_threshold: float = 0.85
+    max_portfolio_risk_pct: float = 4.0
+    max_position_size_pct: float = 10.0
+    max_single_trade_risk_pct: float = 2.0
+    max_daily_loss_pct: float = 5.0
+    max_weekly_loss_pct: float = 8.0
+    max_drawdown_pct: float = 15.0
+    max_open_positions: int = 30
+    max_sector_exposure_pct: float = 30.0
+    max_correlation_threshold: float = 0.90
     stop_loss_atr_multiplier: float = 2.0
     take_profit_atr_multiplier: float = 4.0
     min_sharpe_ratio: float = 0.5
     position_sizing: str = "kelly"
-    kelly_fraction: float = 0.25
+    kelly_fraction: float = 0.5
 
 
 class ExecutionConfig(BaseModel):
