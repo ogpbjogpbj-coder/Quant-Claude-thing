@@ -131,6 +131,16 @@ class StrategySentimentConfig(BaseModel):
     cache_hours: int = 4
 
 
+class StrategyAdaptiveConfig(BaseModel):
+    enabled: bool = True
+    weight: float = 0.15
+    min_trades_to_learn: int = 20
+    learning_lookback: int = 200
+    min_rule_confidence: float = 0.55
+    max_rules: int = 30
+    evolution_interval_hours: int = 6
+
+
 class StrategiesConfig(BaseModel):
     momentum: StrategyMomentumConfig = StrategyMomentumConfig()
     mean_reversion: StrategyMeanReversionConfig = StrategyMeanReversionConfig()
@@ -139,6 +149,7 @@ class StrategiesConfig(BaseModel):
     trend_following: StrategyTrendConfig = StrategyTrendConfig()
     pairs_trading: StrategyPairsConfig = StrategyPairsConfig()
     sentiment: StrategySentimentConfig = StrategySentimentConfig()
+    adaptive: StrategyAdaptiveConfig = StrategyAdaptiveConfig()
 
 
 class TradingConfig(BaseModel):

@@ -1,7 +1,9 @@
 """Main trading orchestrator — the brain of the system.
 
 Coordinates data ingestion, signal generation, risk management,
-and order execution on a scheduled loop.
+and order execution on a scheduled loop. Now with adaptive learning:
+every trade is journaled, patterns are mined, and the system evolves
+its own strategies over time.
 """
 
 import signal
@@ -21,7 +23,7 @@ from trading_system.cost_model import ExecutionCostModel
 from trading_system.data_ingestion import DataIngestion
 from trading_system.execution import ExecutionEngine
 from trading_system.portfolio import PortfolioManager
-from trading_system.regime_detector import RegimeDetector
+from trading_system.regime_detector import RegimeDetector, RegimeState
 from trading_system.risk_manager import RiskManager
 from trading_system.signal_aggregator import SignalAggregator
 from trading_system.signal_decay import SignalDecayTracker
@@ -33,13 +35,17 @@ from trading_system.strategies import (
     TrendFollowingStrategy,
     PairsTradingStrategy,
     SentimentStrategy,
+    AdaptiveStrategy,
 )
+from trading_system.strategies.base import Signal
+from trading_system.trade_journal import TradeJournal
+from trading_system.strategy_evolver import StrategyEvolver
 from trading_system.utils.db import init_db
 from trading_system.utils.logger import setup_logger, log_trade
 
 
 class TradingOrchestrator:
-    """Main trading loop coordinator."""
+    """Main trading loop coordinator with adaptive learning."""
 
     def __init__(self, config: Optional[TradingConfig] = None):
         self.config = config or load_config()
@@ -71,13 +77,14 @@ class TradingOrchestrator:
         )
         self.aggregator = SignalAggregator(self.config.strategies)
 
-        # New: Regime detection
+        # Regime detection
         self.regime_detector = RegimeDetector()
+        self._current_regime: Optional[RegimeState] = None
 
-        # New: Execution cost model
+        # Execution cost model
         self.cost_model = ExecutionCostModel(self.config.execution)
 
-        # New: Signal decay tracker
+        # Signal decay tracker
         base_weights = {
             "momentum": self.config.strategies.momentum.weight,
             "mean_reversion": self.config.strategies.mean_reversion.weight,
@@ -86,8 +93,18 @@ class TradingOrchestrator:
             "trend_following": self.config.strategies.trend_following.weight,
             "pairs_trading": self.config.strategies.pairs_trading.weight,
             "sentiment": self.config.strategies.sentiment.weight,
+            "adaptive": self.config.strategies.adaptive.weight,
         }
         self.signal_decay = SignalDecayTracker(base_weights)
+
+        # === NEW: Adaptive learning components ===
+        self.trade_journal = TradeJournal()
+        self.strategy_evolver = StrategyEvolver()
+
+        # Track which signals led to which trades (for journal entries)
+        self._pending_signals: dict[str, dict] = {}
+        # Cache enriched data for journal context
+        self._last_enriched: dict = {}
 
         # Initialize strategies
         self.strategies = []
@@ -113,6 +130,8 @@ class TradingOrchestrator:
                     secret_key=self.config.alpaca.secret_key,
                 )
             )
+        if sc.adaptive.enabled:
+            self.strategies.append(AdaptiveStrategy(sc.adaptive))
 
         logger.info(f"Loaded {len(self.strategies)} strategies: "
                      f"{[s.name for s in self.strategies]}")
@@ -150,7 +169,6 @@ class TradingOrchestrator:
             # 3. Check circuit breakers
             if not self.risk_manager.check_circuit_breakers(self.portfolio.equity):
                 logger.warning("Circuit breaker active — no new trades")
-                # Still check stops on existing positions
                 self._check_stops()
                 return
 
@@ -159,9 +177,11 @@ class TradingOrchestrator:
             if not enriched:
                 logger.warning("No market data available")
                 return
+            self._last_enriched = enriched
 
             # 5. Regime detection — adjusts strategy weights
             regime_state = self.regime_detector.detect(enriched)
+            self._current_regime = regime_state
             self.aggregator.set_regime_adjustments(regime_state.strategy_weights)
             logger.info(
                 f"Regime: {regime_state.regime.name} "
@@ -172,11 +192,10 @@ class TradingOrchestrator:
             # 6. Get latest prices
             prices = self.data.get_latest_quotes(list(enriched.keys()))
             if not prices:
-                # Fallback to last close
                 prices = {sym: df.iloc[-1]["close"] for sym, df in enriched.items() if not df.empty}
 
-            # 7. Check stops on existing positions
-            self._check_stops_with_prices(prices)
+            # 7. Check stops on existing positions — journal exits
+            self._check_stops_with_journal(prices)
 
             # 8. Generate signals from all strategies
             current_positions = self.portfolio.get_current_positions_qty()
@@ -199,7 +218,7 @@ class TradingOrchestrator:
             consensus = self.aggregator.aggregate(all_signals)
             logger.info(f"Consensus: {len(consensus)} actionable signals")
 
-            # 10. Cost model filter — skip trades where cost > expected alpha
+            # 10. Cost model filter
             cost_filtered = []
             for sig in consensus:
                 price = prices.get(sig.symbol, 0)
@@ -207,14 +226,11 @@ class TradingOrchestrator:
                     continue
                 vol = sig.metadata.get("volatility_21d", 0.2)
                 avg_vol = sig.metadata.get("avg_volume", 1_000_000)
-                est_qty = (self.portfolio.equity * 0.03) / price  # rough estimate
+                est_qty = (self.portfolio.equity * 0.03) / price
                 cost_est = self.cost_model.estimate_cost(
-                    symbol=sig.symbol,
-                    qty=est_qty,
-                    price=price,
+                    symbol=sig.symbol, qty=est_qty, price=price,
                     side="buy" if sig.is_buy else "sell",
-                    volatility=vol,
-                    avg_volume=avg_vol,
+                    volatility=vol, avg_volume=avg_vol,
                 )
                 if self.cost_model.should_trade(sig.strength, cost_est):
                     cost_filtered.append(sig)
@@ -225,27 +241,46 @@ class TradingOrchestrator:
                     )
             consensus = cost_filtered
 
-            # 11. Apply regime position scale to signals
+            # 11. Apply regime position scale
             if regime_state.position_scale < 1.0:
                 for sig in consensus:
                     sig.metadata["regime_scale"] = regime_state.position_scale
 
-            for sig in consensus[:5]:  # Log top 5
+            for sig in consensus[:5]:
                 logger.info(
                     f"  {sig.symbol}: dir={sig.direction:+.3f} "
                     f"conf={sig.confidence:.3f} str={sig.strength:.3f} "
                     f"[{sig.strategy}]"
                 )
 
-            # 12. Execute trades
+            # 12. Store signal context for journal BEFORE executing
+            for sig in consensus:
+                if sig.is_buy:
+                    self._pending_signals[sig.symbol] = {
+                        "signal": sig,
+                        "all_signals": [s for s in all_signals if s.symbol == sig.symbol],
+                        "regime_state": regime_state,
+                        "enriched": enriched.get(sig.symbol),
+                    }
+
+            # 13. Execute trades
             if consensus:
                 order_ids = self.portfolio.process_signals(consensus, prices, enriched)
                 logger.info(f"Placed {len(order_ids)} orders")
 
-            # 13. Take portfolio snapshot
+                # 14. Journal entries for new positions
+                self._journal_new_entries(consensus, prices)
+
+            # 15. Journal exits for closed positions
+            self._journal_closed_positions(prices)
+
+            # 16. Take portfolio snapshot
             self.portfolio.take_snapshot()
 
-            # 14. Log signal decay stats periodically
+            # 17. Feed signal outcomes to decay tracker
+            self._update_signal_decay(prices)
+
+            # 18. Log signal decay stats
             decay_stats = self.signal_decay.get_strategy_stats()
             for strat, stats in decay_stats.items():
                 if stats["signal_count"] > 0:
@@ -260,20 +295,199 @@ class TradingOrchestrator:
         except Exception as e:
             logger.exception(f"Trading cycle failed: {e}")
 
+    # =========================================================================
+    # Trade Journal Integration
+    # =========================================================================
+
+    def _journal_new_entries(
+        self,
+        consensus: list[Signal],
+        prices: dict[str, float],
+    ) -> None:
+        """Record journal entries for trades that were just placed."""
+        for sig in consensus:
+            if not sig.is_buy:
+                continue
+            # Only journal if we actually have a position now
+            if sig.symbol not in self.portfolio.tracked:
+                continue
+
+            ctx = self._pending_signals.get(sig.symbol, {})
+            price = prices.get(sig.symbol, 0)
+
+            try:
+                journal_id = self.trade_journal.record_entry(
+                    symbol=sig.symbol,
+                    qty=self.portfolio.tracked[sig.symbol].qty,
+                    price=price or self.portfolio.tracked[sig.symbol].avg_entry,
+                    signal=sig,
+                    regime_state=self._current_regime,
+                    enriched_data=self._last_enriched,
+                    all_signals=ctx.get("all_signals", []),
+                )
+                if journal_id:
+                    # Store journal_id on the tracked position for later exit recording
+                    self.portfolio.tracked[sig.symbol].strategy = (
+                        f"{sig.strategy}|jid:{journal_id}"
+                    )
+                    logger.debug(f"Journaled entry for {sig.symbol} (id={journal_id})")
+            except Exception as e:
+                logger.warning(f"Failed to journal entry for {sig.symbol}: {e}")
+
+        # Clear pending signals
+        self._pending_signals.clear()
+
+    def _journal_closed_positions(self, prices: dict[str, float]) -> None:
+        """Check for positions that were closed this cycle and journal exits."""
+        try:
+            broker_positions = self.execution.get_positions()
+            broker_symbols = set(broker_positions.keys())
+
+            # Find symbols that were tracked but are no longer at broker
+            for sym in list(self._recently_closed):
+                price = prices.get(sym, 0)
+                exit_info = self._recently_closed[sym]
+                try:
+                    self.trade_journal.record_exit(
+                        symbol=sym,
+                        exit_price=price or exit_info.get("price", 0),
+                        exit_reason=exit_info.get("reason", "unknown"),
+                        tracked_position=exit_info.get("tracked"),
+                    )
+                    logger.debug(f"Journaled exit for {sym}: {exit_info.get('reason')}")
+                except Exception as e:
+                    logger.warning(f"Failed to journal exit for {sym}: {e}")
+
+            self._recently_closed.clear()
+        except Exception as e:
+            logger.warning(f"Journal closed positions check failed: {e}")
+
+    def _check_stops_with_journal(self, prices: dict[str, float]) -> None:
+        """Check stops and record exits in the journal."""
+        # Snapshot tracked positions before stop check
+        pre_check = dict(self.portfolio.tracked)
+
+        triggered = self.portfolio.check_stops(prices)
+
+        if triggered:
+            logger.warning(f"Stops triggered for: {triggered}")
+            for sym in triggered:
+                tracked = pre_check.get(sym)
+                price = prices.get(sym, 0)
+                reason = "stop_loss"
+                if tracked and tracked.take_profit > 0 and price >= tracked.take_profit:
+                    reason = "take_profit"
+                try:
+                    self.trade_journal.record_exit(
+                        symbol=sym,
+                        exit_price=price,
+                        exit_reason=reason,
+                        tracked_position=tracked,
+                    )
+                    logger.debug(f"Journaled stop exit for {sym}: {reason}")
+                except Exception as e:
+                    logger.warning(f"Failed to journal stop exit for {sym}: {e}")
+
+    def _update_signal_decay(self, prices: dict[str, float]) -> None:
+        """Feed recent trade outcomes to the signal decay tracker."""
+        try:
+            for sym, tracked in self.portfolio.tracked.items():
+                if sym in prices and tracked.avg_entry > 0:
+                    current_return = (prices[sym] - tracked.avg_entry) / tracked.avg_entry
+                    # Extract original strategy name
+                    strat_name = tracked.strategy.split("|")[0] if tracked.strategy else ""
+                    # Try to extract individual strategies from consensus name
+                    if strat_name.startswith("consensus("):
+                        inner = strat_name[10:].rstrip(")")
+                        for s in inner.split(","):
+                            s = s.strip()
+                            if s:
+                                self.signal_decay.record_signal_outcome(
+                                    s, 0.5, current_return
+                                )
+                    elif strat_name:
+                        self.signal_decay.record_signal_outcome(
+                            strat_name, 0.5, current_return
+                        )
+        except Exception as e:
+            logger.warning(f"Signal decay update failed: {e}")
+
+    # =========================================================================
+    # Strategy Evolution (runs periodically)
+    # =========================================================================
+
+    def _run_evolution(self) -> None:
+        """Run the strategy evolution cycle."""
+        try:
+            if not self.execution.is_market_open():
+                return
+
+            logger.info("Running strategy evolution cycle...")
+
+            # Get latest enriched data
+            enriched = self._last_enriched or self.data.get_enriched_data()
+
+            # Run evolution
+            report = self.strategy_evolver.evolve_strategies(enriched)
+
+            if report.get("trades_analyzed", 0) > 0:
+                logger.info(
+                    f"Evolution complete: analyzed {report['trades_analyzed']} trades, "
+                    f"promoted {report.get('rules_promoted', 0)} rules, "
+                    f"demoted {report.get('rules_demoted', 0)} rules, "
+                    f"{report.get('active_rules', 0)} active"
+                )
+                for insight in report.get("insights", [])[:5]:
+                    logger.info(f"  Insight: {insight}")
+                for rule in report.get("top_rules", [])[:3]:
+                    logger.info(
+                        f"  Top rule: {rule['name']} "
+                        f"(win={rule['win_rate']:.0%}, pf={rule['profit_factor']:.2f}, "
+                        f"n={rule['sample_size']})"
+                    )
+
+            # Log trade journal summary
+            perf = self.trade_journal.get_strategy_performance()
+            if perf.get("total_trades", 0) > 0:
+                logger.info(
+                    f"Journal stats: {perf['total_trades']} trades, "
+                    f"win_rate={perf.get('win_rate', 0):.1%}, "
+                    f"avg_pnl={perf.get('avg_pnl_pct', 0):.2%}"
+                )
+
+            # Log lesson insights
+            lessons = self.trade_journal.get_lessons_summary()
+            if lessons:
+                for key, val in list(lessons.items())[:3]:
+                    if isinstance(val, (int, float)):
+                        logger.info(f"  Lesson: {key} = {val:.1%}" if val < 1 else f"  Lesson: {key} = {val}")
+
+        except Exception as e:
+            logger.error(f"Strategy evolution failed: {e}")
+
+    # =========================================================================
+    # Stop checks
+    # =========================================================================
+
     def _check_stops(self) -> None:
         """Check stops using broker prices."""
         try:
             positions = self.execution.get_positions()
             prices = {sym: p["current_price"] for sym, p in positions.items()}
-            self._check_stops_with_prices(prices)
+            self._check_stops_with_journal(prices)
         except Exception as e:
             logger.error(f"Stop check failed: {e}")
 
-    def _check_stops_with_prices(self, prices: dict[str, float]) -> None:
-        """Check all position stops against given prices."""
-        triggered = self.portfolio.check_stops(prices)
-        if triggered:
-            logger.warning(f"Stops triggered for: {triggered}")
+    # =========================================================================
+    # Lifecycle
+    # =========================================================================
+
+    @property
+    def _recently_closed(self) -> dict:
+        """Lazy-init dict tracking recently closed positions."""
+        if not hasattr(self, "__recently_closed"):
+            self.__recently_closed: dict[str, dict] = {}
+        return self.__recently_closed
 
     def start(self) -> None:
         """Start the trading system with scheduled execution."""
@@ -315,6 +529,15 @@ class TradingOrchestrator:
             name="Daily Risk Reset",
         )
 
+        # Strategy evolution every 6 hours during market hours
+        self._scheduler.add_job(
+            self._run_evolution,
+            IntervalTrigger(hours=6),
+            id="evolution",
+            name="Strategy Evolution",
+            max_instances=1,
+        )
+
         self._scheduler.start()
 
         # Run first cycle immediately
@@ -323,7 +546,7 @@ class TradingOrchestrator:
 
         logger.info(
             f"Scheduler running. Trading cycle every {interval} minutes. "
-            f"Press Ctrl+C to stop."
+            f"Strategy evolution every 6 hours. Press Ctrl+C to stop."
         )
 
         # Keep main thread alive
@@ -352,6 +575,14 @@ class TradingOrchestrator:
             slippage = self.cost_model.get_slippage_stats()
             if slippage:
                 logger.info(f"Session slippage stats: {slippage}")
+        except Exception:
+            pass
+
+        # Log final journal stats
+        try:
+            perf = self.trade_journal.get_strategy_performance()
+            if perf.get("total_trades", 0) > 0:
+                logger.info(f"Session journal: {perf}")
         except Exception:
             pass
 

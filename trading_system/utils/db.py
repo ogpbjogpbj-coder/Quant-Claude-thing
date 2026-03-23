@@ -74,6 +74,55 @@ def init_db() -> None:
         CREATE INDEX IF NOT EXISTS idx_trades_symbol ON trades(symbol);
         CREATE INDEX IF NOT EXISTS idx_trades_timestamp ON trades(timestamp);
         CREATE INDEX IF NOT EXISTS idx_snapshots_timestamp ON portfolio_snapshots(timestamp);
+
+        CREATE TABLE IF NOT EXISTS trade_journal (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            strategy TEXT NOT NULL,
+            entry_time TEXT NOT NULL,
+            entry_price REAL NOT NULL,
+            entry_qty REAL NOT NULL,
+            entry_signal_direction REAL,
+            entry_signal_confidence REAL,
+            entry_signal_strength REAL,
+            entry_regime TEXT,
+            entry_regime_confidence REAL,
+            entry_volatility_regime TEXT,
+            entry_trend_strength REAL,
+            entry_correlation_level REAL,
+            entry_indicators TEXT,
+            exit_time TEXT,
+            exit_price REAL,
+            exit_reason TEXT,
+            pnl_dollars REAL,
+            pnl_pct REAL,
+            holding_period_hours REAL,
+            max_favorable_excursion REAL,
+            max_adverse_excursion REAL,
+            agreeing_strategies TEXT,
+            disagreeing_strategies TEXT,
+            outcome_label TEXT,
+            lessons TEXT,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS evolved_rules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            rule_name TEXT NOT NULL UNIQUE,
+            rule_type TEXT NOT NULL,
+            conditions TEXT NOT NULL,
+            performance_score REAL,
+            times_triggered INTEGER DEFAULT 0,
+            times_correct INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL,
+            last_updated TEXT,
+            active INTEGER DEFAULT 1
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_journal_symbol ON trade_journal(symbol);
+        CREATE INDEX IF NOT EXISTS idx_journal_strategy ON trade_journal(strategy);
+        CREATE INDEX IF NOT EXISTS idx_journal_outcome ON trade_journal(outcome_label);
+        CREATE INDEX IF NOT EXISTS idx_rules_active ON evolved_rules(active);
     """)
 
     conn.commit()

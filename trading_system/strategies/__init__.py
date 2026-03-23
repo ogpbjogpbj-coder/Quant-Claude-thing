@@ -8,6 +8,7 @@ from trading_system.strategies.volatility_breakout import VolatilityBreakoutStra
 from trading_system.strategies.trend_following import TrendFollowingStrategy
 from trading_system.strategies.pairs_trading import PairsTradingStrategy
 from trading_system.strategies.sentiment import SentimentStrategy
+from trading_system.strategies.adaptive import AdaptiveStrategy
 
 __all__ = [
     "BaseStrategy",
@@ -19,4 +20,5 @@ __all__ = [
     "TrendFollowingStrategy",
     "PairsTradingStrategy",
     "SentimentStrategy",
+    "AdaptiveStrategy",
 ]
