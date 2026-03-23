@@ -111,6 +111,7 @@ strategies:
     earnings_boost: 0.3         # Extra weight for earnings catalysts
     max_confidence: 0.80
     min_articles: 2
+    max_holding_days: 21            # Auto-exit after 3 weeks
 
 # Risk management
 risk:
@@ -125,6 +126,7 @@ risk:
   max_correlation_threshold: 0.85    # Skip if too correlated with existing
   stop_loss_atr_multiplier: 2.0      # Trailing stop as ATR multiple
   take_profit_atr_multiplier: 4.0
+  max_holding_days: 30               # Default max hold for any position
   min_sharpe_ratio: 0.5              # Min signal quality to trade
   position_sizing: "kelly"           # kelly | equal | volatility_parity
   kelly_fraction: 0.25               # Use quarter-Kelly for safety

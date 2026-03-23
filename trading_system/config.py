@@ -46,6 +46,7 @@ class RiskConfig(BaseModel):
     min_sharpe_ratio: float = 0.5
     position_sizing: str = "kelly"
     kelly_fraction: float = 0.5
+    max_holding_days: int = 30  # Default max hold: auto-exit after this many days
 
 
 class ExecutionConfig(BaseModel):
@@ -153,6 +154,7 @@ class StrategyCatalystConfig(BaseModel):
     earnings_boost: float = 0.3
     max_confidence: float = 0.80
     min_articles: int = 2
+    max_holding_days: int = 21  # Auto-exit catalyst trades after 3 weeks
 
 
 class StrategiesConfig(BaseModel):

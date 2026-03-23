@@ -1,7 +1,7 @@
 """Portfolio manager — tracks positions, P&L, and manages trade lifecycle."""
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import numpy as np
@@ -53,11 +53,12 @@ class TrackedPosition:
     avg_entry: float
     side: str  # "long" or "short"
     strategy: str = ""
-    entry_time: datetime = field(default_factory=datetime.utcnow)
+    entry_time: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     stop_loss: float = 0.0
     take_profit: float = 0.0
     highest_price: float = 0.0  # For trailing stop
     lowest_price: float = float("inf")
+    max_holding_days: int = 30  # Auto-exit after this many days
 
     @property
     def cost_basis(self) -> float:
@@ -287,6 +288,10 @@ class PortfolioManager:
                         t.avg_entry = (t.avg_entry * t.qty + price * qty) / total_qty
                         t.qty = total_qty
                     else:
+                        hold_days = signal.metadata.get(
+                            "max_holding_days",
+                            self.config.risk.max_holding_days,
+                        )
                         self.tracked[signal.symbol] = TrackedPosition(
                             symbol=signal.symbol,
                             qty=qty,
@@ -296,6 +301,7 @@ class PortfolioManager:
                             stop_loss=signal.stop_loss or (price * 0.95),
                             take_profit=signal.take_profit or (price * 1.10),
                             highest_price=price,
+                            max_holding_days=hold_days,
                         )
                     order_ids.append(order_id)
 
@@ -328,11 +334,12 @@ class PortfolioManager:
         return order_ids
 
     def check_stops(self, prices: dict[str, float]) -> list[str]:
-        """Check all positions against stop losses and take profits.
+        """Check all positions against stop losses, take profits, and max holding period.
 
         Returns list of symbols where stops were triggered.
         """
         triggered = []
+        now = datetime.now(timezone.utc)
 
         for sym, tracked in list(self.tracked.items()):
             price = prices.get(sym, 0)
@@ -340,6 +347,22 @@ class PortfolioManager:
                 continue
 
             tracked.update_extremes(price)
+
+            # --- Max holding period check ---
+            entry = tracked.entry_time
+            if entry.tzinfo is None:
+                entry = entry.replace(tzinfo=timezone.utc)
+            days_held = (now - entry).total_seconds() / 86400
+            if days_held >= tracked.max_holding_days:
+                pnl_pct = (price - tracked.avg_entry) / tracked.avg_entry * 100
+                logger.info(
+                    f"MAX HOLD triggered for {sym}: "
+                    f"held {days_held:.1f} days (limit={tracked.max_holding_days}d), "
+                    f"strategy={tracked.strategy}, pnl={pnl_pct:+.1f}%"
+                )
+                self.execution.close_position(sym, reason="max_holding_period")
+                triggered.append(sym)
+                continue
 
             # Ensure every position has a stop loss (3% max loss from entry)
             if tracked.stop_loss <= 0:

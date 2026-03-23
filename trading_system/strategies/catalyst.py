@@ -231,6 +231,7 @@ class CatalystStrategy(BaseStrategy):
                 "volume_confirms": has_volume,
                 "n_articles": len(articles),
                 "holding_period": "medium_term",
+                "max_holding_days": self.config.max_holding_days,
                 "volatility_21d": float(last.get("volatility_21d", 0.2)),
             },
         )
