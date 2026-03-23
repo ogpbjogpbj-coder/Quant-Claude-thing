@@ -294,7 +294,6 @@ class TradingOrchestrator:
                         "signal": sig,
                         "all_signals": [s for s in all_signals if s.symbol == sig.symbol],
                         "regime_state": regime_state,
-                        "enriched": enriched.get(sig.symbol),
                     }
 
             # 13. Execute trades
@@ -374,17 +373,14 @@ class TradingOrchestrator:
     def _journal_closed_positions(self, prices: dict[str, float]) -> None:
         """Check for positions that were closed this cycle and journal exits."""
         try:
-            broker_positions = self.execution.get_positions()
-            broker_symbols = set(broker_positions.keys())
-
-            # Find symbols that were tracked but are no longer at broker
-            for sym in list(self._recently_closed):
-                price = prices.get(sym, 0)
-                exit_info = self._recently_closed[sym]
+            closed = getattr(self.portfolio, "_recently_closed", [])
+            for exit_info in closed:
+                sym = exit_info["symbol"]
+                price = prices.get(sym, 0) or exit_info.get("price", 0)
                 try:
                     self.trade_journal.record_exit(
                         symbol=sym,
-                        exit_price=price or exit_info.get("price", 0),
+                        exit_price=price,
                         exit_reason=exit_info.get("reason", "unknown"),
                         tracked_position=exit_info.get("tracked"),
                     )
@@ -392,7 +388,8 @@ class TradingOrchestrator:
                 except Exception as e:
                     logger.warning(f"Failed to journal exit for {sym}: {e}")
 
-            self._recently_closed.clear()
+            if closed:
+                closed.clear()
         except Exception as e:
             logger.warning(f"Journal closed positions check failed: {e}")
 
@@ -515,13 +512,6 @@ class TradingOrchestrator:
     # =========================================================================
     # Lifecycle
     # =========================================================================
-
-    @property
-    def _recently_closed(self) -> dict:
-        """Lazy-init dict tracking recently closed positions."""
-        if not hasattr(self, "__recently_closed"):
-            self.__recently_closed: dict[str, dict] = {}
-        return self.__recently_closed
 
     def start(self) -> None:
         """Start the trading system with scheduled execution."""

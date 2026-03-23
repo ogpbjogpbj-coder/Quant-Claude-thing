@@ -224,6 +224,7 @@ class PortfolioManager:
             return []
 
         order_ids = []
+        self._recently_closed: list[dict] = []
 
         for signal in approved:
             price = prices.get(signal.symbol, 0)
@@ -347,10 +348,18 @@ class PortfolioManager:
                     )
 
                 if order_id:
+                    if sell_fraction >= 0.9 and signal.symbol in self.tracked:
+                        self._recently_closed.append({
+                            "symbol": signal.symbol,
+                            "reason": signal.strategy,
+                            "price": price,
+                            "tracked": self.tracked[signal.symbol],
+                        })
                     order_ids.append(order_id)
 
             elif signal.is_sell and current_qty == 0 and self.config.execution.enable_short_selling:
                 # Short sell: open a new short position
+                est_size = self._equity * self.config.risk.max_position_size_pct / 100 * 0.5
                 if not self._check_sector_limit(signal.symbol, est_size):
                     continue
 
